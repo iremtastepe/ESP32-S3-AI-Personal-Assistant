@@ -1,0 +1,32 @@
+# ESP-IDF
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# VS Code
+.vscode/settings.json
+
+# Gizli bilgiler
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+secrets.h
+credentials.h
+wifi_secrets.h
+*.pem
+*.key
+*.p12
+*.pfx
+
+# İşletim sistemi
+.DS_Store
+Thumbs.db
