@@ -1,8 +1,11 @@
 
 #include "cat/ui/TasksScreen.hpp"
 #include "cat/ui/HomeScreen.hpp"
+#include "cat/application/TaskStore.hpp"
 #include "lvgl.h"
 #include "tr_font.h"
+#include <cstring>
+#include <cstddef>
 
 namespace cat::ui {
 namespace {
@@ -14,6 +17,12 @@ constexpr uint32_t MUTED = 0x987F97;
 constexpr uint32_t PURPLE = 0x896990;
 constexpr uint32_t LILAC = 0xEDE4ED;
 constexpr uint32_t TRACK = 0xDCCBDD;
+
+constexpr const char* DEMO_TODAY = "2026-11-10";
+constexpr const char* DEMO_TOMORROW = "2026-11-11";
+
+using cat::application::Task;
+using cat::application::TaskStore;
 
 // -------------------------
 // YARDIMCI FONKSIYONLAR
@@ -51,12 +60,16 @@ lv_obj_t* box(
         obj, LV_OBJ_FLAG_SCROLLABLE
     );
 
+    lv_obj_remove_flag(
+        obj, LV_OBJ_FLAG_CLICKABLE
+    );
+
     return obj;
 }
 
 lv_obj_t* txt(
     lv_obj_t* parent,
-    const char* value,
+    const char* text,
     int x,
     int y,
     uint32_t color,
@@ -65,7 +78,7 @@ lv_obj_t* txt(
 {
     lv_obj_t* obj = lv_label_create(parent);
 
-    lv_label_set_text(obj, value);
+    lv_label_set_text(obj, text);
     lv_obj_set_pos(obj, x, y);
 
     lv_obj_set_style_text_color(
@@ -94,22 +107,61 @@ void go_home(lv_event_t*)
 }
 
 // -------------------------
-// GOREV SATIRLARI
+// GOREV TAMAMLAMA
+// -------------------------
+
+void on_task_click(lv_event_t* event)
+{
+    const Task* task = static_cast<const Task*>(
+        lv_event_get_user_data(event)
+    );
+
+    if (!task) {
+        return;
+    }
+
+    if (
+        TaskStore::instance()
+            .toggle_completed(task->id)
+    ) {
+        lv_async_call(
+            [](void*) {
+                create_tasks_screen();
+            },
+            nullptr
+        );
+    }
+}
+
+// -------------------------
+// GOREV SATIRI
 // -------------------------
 
 void add_task(
     lv_obj_t* parent,
     int y,
-    const char* name,
-    bool completed,
-    bool carried = false
+    const Task& task
 )
 {
+    const bool completed = task.completed;
+
     lv_obj_t* row = box(
         parent,
         2, y,
         216, 30,
         WHITE, 10
+    );
+
+    lv_obj_add_flag(
+        row,
+        LV_OBJ_FLAG_CLICKABLE
+    );
+
+    lv_obj_add_event_cb(
+        row,
+        on_task_click,
+        LV_EVENT_SHORT_CLICKED,
+        const_cast<Task*>(&task)
     );
 
     lv_obj_t* circle = box(
@@ -133,43 +185,62 @@ void add_task(
     );
 
     if (completed) {
-        lv_obj_t* check = txt(
-            circle,
-            LV_SYMBOL_OK,
-            0, 0,
-            WHITE,
-            LV_FONT_DEFAULT
+        lv_obj_center(
+            txt(
+                circle,
+                LV_SYMBOL_OK,
+                0, 0,
+                WHITE,
+                LV_FONT_DEFAULT
+            )
         );
-
-        lv_obj_center(check);
     }
 
-    lv_obj_t* name_label = txt(
+    char display[160];
+
+    if (task.time && task.time[0]) {
+        lv_snprintf(
+            display,
+            sizeof(display),
+            "%s  %s",
+            task.time,
+            task.title
+        );
+    } else {
+        lv_snprintf(
+            display,
+            sizeof(display),
+            "%s",
+            task.title
+        );
+    }
+
+    lv_obj_t* name = txt(
         row,
-        name,
+        display,
         32, 8,
         completed ? MUTED : INK
     );
 
     lv_obj_set_width(
-        name_label,
-        carried ? 110 : 173
+        name,
+        task.carried ? 110 : 173
     );
 
     lv_label_set_long_mode(
-        name_label,
+        name,
         LV_LABEL_LONG_MODE_DOTS
     );
 
     if (completed) {
         lv_obj_set_style_text_decor(
-            name_label,
+            name,
             LV_TEXT_DECOR_STRIKETHROUGH,
             0
         );
     }
 
-    if (carried) {
+    if (task.carried) {
         txt(
             row,
             "↻ Devreden",
@@ -180,22 +251,52 @@ void add_task(
 }
 
 // -------------------------
-// BOLUM BASLIKLARI
+// GOREV GRUPLAMA
 // -------------------------
 
-void add_heading(
-    lv_obj_t* parent,
-    const char* heading,
-    int y
+int group_of(const Task& task)
+{
+    if (
+        task.carried ||
+        !task.date ||
+        std::strcmp(
+            task.date,
+            DEMO_TODAY
+        ) <= 0
+    ) {
+        return 0;
+    }
+
+    if (
+        std::strcmp(
+            task.date,
+            DEMO_TOMORROW
+        ) == 0
+    ) {
+        return 1;
+    }
+
+    return 2;
+}
+
+bool after(
+    const Task& a,
+    const Task& b
 )
 {
-    txt(
-        parent,
-        heading,
-        3, y,
-        INK,
-        &tr_font_14
-    );
+    if (a.completed != b.completed) {
+        return a.completed;
+    }
+
+    if (!a.time || !a.time[0]) {
+        return b.time && b.time[0];
+    }
+
+    if (!b.time || !b.time[0]) {
+        return false;
+    }
+
+    return std::strcmp(a.time, b.time) > 0;
 }
 
 // -------------------------
@@ -227,15 +328,15 @@ void create_header(lv_obj_t* screen)
         LV_RADIUS_CIRCLE
     );
 
-    lv_obj_t* plus = txt(
-        add,
-        "+",
-        0, 0,
-        WHITE,
-        &tr_font_14
+    lv_obj_center(
+        txt(
+            add,
+            "+",
+            0, 0,
+            WHITE,
+            &tr_font_14
+        )
     );
-
-    lv_obj_center(plus);
 }
 
 // -------------------------
@@ -244,6 +345,26 @@ void create_header(lv_obj_t* screen)
 
 void create_progress(lv_obj_t* screen)
 {
+    const TaskStore& store =
+        TaskStore::instance();
+
+    int done = 0;
+    int total = 0;
+
+    for (std::size_t i = 0; i < store.count(); ++i) {
+        const Task& task = store.tasks()[i];
+
+        if (group_of(task) != 0) {
+            continue;
+        }
+
+        ++total;
+
+        if (task.completed) {
+            ++done;
+        }
+    }
+
     lv_obj_t* card = box(
         screen,
         10, 67,
@@ -258,14 +379,23 @@ void create_progress(lv_obj_t* screen)
         INK
     );
 
+    char label_text[24];
+
+    lv_snprintf(
+        label_text,
+        sizeof(label_text),
+        "%d/%d",
+        done,
+        total
+    );
+
     txt(
         card,
-        "1/3",
-        184, 7,
+        label_text,
+        176, 7,
         PURPLE
     );
 
-    // Ilerleme cubugu arka plani
     box(
         card,
         11, 29,
@@ -273,13 +403,19 @@ void create_progress(lv_obj_t* screen)
         TRACK, 5
     );
 
-    // Tamamlanan gorev orani
-    box(
-        card,
-        11, 29,
-        66, 8,
-        PURPLE, 5
-    );
+    const int width =
+        total > 0
+            ? (198 * done) / total
+            : 0;
+
+    if (width > 0) {
+        box(
+            card,
+            11, 29,
+            width, 8,
+            PURPLE, 5
+        );
+    }
 }
 
 // -------------------------
@@ -310,77 +446,76 @@ void create_task_list(lv_obj_t* screen)
         LV_SCROLLBAR_MODE_AUTO
     );
 
-    // BUGUN
+    const TaskStore& store =
+        TaskStore::instance();
 
-    add_heading(
-        list,
+    const Task* tasks = store.tasks();
+
+    const char* headings[3] = {
         "Bugün",
-        2
-    );
-
-    add_task(
-        list,
-        23,
-        "Kitap oku",
-        true
-    );
-
-    add_task(
-        list,
-        57,
-        "Ders çalış",
-        false
-    );
-
-    add_task(
-        list,
-        91,
-        "Projeye devam et",
-        false
-    );
-
-    // YARIN
-
-    add_heading(
-        list,
         "Yarın",
-        131
-    );
+        "Yaklaşan"
+    };
 
-    add_task(
-        list,
-        152,
-        "İngilizce çalış",
-        false
-    );
+    int y = 2;
 
-    add_task(
-        list,
-        186,
-        "Alışveriş yap",
-        false
-    );
+    for (int group = 0; group < 3; ++group) {
+        int indices[16];
+        int count = 0;
 
-    // YAKLASAN
+        for (std::size_t i = 0; i < store.count(); ++i) {
+            if (
+                group_of(tasks[i]) == group &&
+                count < 16
+            ) {
+                indices[count++] =
+                    static_cast<int>(i);
+            }
+        }
 
-    add_heading(
-        list,
-        "Yaklaşan",
-        226
-    );
+        if (!count) {
+            continue;
+        }
 
-    add_task(
-        list,
-        247,
-        "Proje sunumu hazırla",
-        false
-    );
+        for (int i = 0; i < count; ++i) {
+            for (int j = i + 1; j < count; ++j) {
+                if (after(
+                    tasks[indices[i]],
+                    tasks[indices[j]]
+                )) {
+                    int temp = indices[i];
+                    indices[i] = indices[j];
+                    indices[j] = temp;
+                }
+            }
+        }
 
-    // GECMIS GOREVLER
+        txt(
+            list,
+            headings[group],
+            3, y,
+            INK,
+            &tr_font_14
+        );
+
+        y += 21;
+
+        for (int i = 0; i < count; ++i) {
+            add_task(
+                list,
+                y,
+                tasks[indices[i]]
+            );
+
+            y += 34;
+        }
+
+        y += 6;
+    }
 
     lv_obj_t* history = box(
         list,
-        2, 289,
+        2, y,
         216, 30,
         LILAC, 10
     );
@@ -394,7 +529,7 @@ void create_task_list(lv_obj_t* screen)
 }
 
 // -------------------------
-// ALT MENU KEDI SIMGESI
+// ALT MENU KEDI IKONU
 // -------------------------
 
 void create_cat_icon(
@@ -403,32 +538,37 @@ void create_cat_icon(
     int y
 )
 {
-    // Kulaklar
-    box(parent, x + 3, y, 3, 7, MUTED);
-    box(parent, x + 15, y, 3, 7, MUTED);
-
-    // Kafa
     box(
         parent,
-        x + 3,
-        y + 6,
+        x + 3, y,
+        3, 7,
+        MUTED
+    );
+
+    box(
+        parent,
+        x + 15, y,
+        3, 7,
+        MUTED
+    );
+
+    box(
+        parent,
+        x + 3, y + 6,
         15, 11,
         MUTED, 3
     );
 
-    // Gozler
     box(
         parent,
-        x + 7,
-        y + 10,
+        x + 7, y + 10,
         2, 2,
         WHITE
     );
 
     box(
         parent,
-        x + 13,
-        y + 10,
+        x + 13, y + 10,
         2, 2,
         WHITE
     );
@@ -447,8 +587,6 @@ void create_navigation(lv_obj_t* screen)
         WHITE
     );
 
-    // ANA SAYFA
-
     txt(
         nav,
         LV_SYMBOL_HOME,
@@ -463,8 +601,6 @@ void create_navigation(lv_obj_t* screen)
         15, 20,
         MUTED
     );
-
-    // GOREVLER
 
     txt(
         nav,
@@ -481,8 +617,6 @@ void create_navigation(lv_obj_t* screen)
         PURPLE
     );
 
-    // KEDIM
-
     create_cat_icon(
         nav,
         188, 2
@@ -495,10 +629,7 @@ void create_navigation(lv_obj_t* screen)
         MUTED
     );
 
-    // ANA SAYFAYA DONUS ICIN
-    // GORUNMEZ DOKUNMATIK ALAN
-
-    lv_obj_t* home_button = box(
+    lv_obj_t* home_btn = box(
         nav,
         0, 0,
         80, 39,
@@ -506,18 +637,18 @@ void create_navigation(lv_obj_t* screen)
     );
 
     lv_obj_set_style_bg_opa(
-        home_button,
+        home_btn,
         LV_OPA_TRANSP,
         0
     );
 
     lv_obj_add_flag(
-        home_button,
+        home_btn,
         LV_OBJ_FLAG_CLICKABLE
     );
 
     lv_obj_add_event_cb(
-        home_button,
+        home_btn,
         go_home,
         LV_EVENT_CLICKED,
         nullptr
@@ -527,7 +658,7 @@ void create_navigation(lv_obj_t* screen)
 } // namespace
 
 // -------------------------
-// GOREVLERIM ANA FONKSIYONU
+// GOREVLER EKRANI
 // -------------------------
 
 void create_tasks_screen()
