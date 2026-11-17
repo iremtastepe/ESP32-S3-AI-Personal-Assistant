@@ -1,6 +1,7 @@
 
 #include "cat/ui/TasksScreen.hpp"
 #include "cat/ui/HomeScreen.hpp"
+#include "cat/ui/CatScreen.hpp"
 #include "cat/application/TaskStore.hpp"
 #include "lvgl.h"
 #include "tr_font.h"
@@ -24,42 +25,32 @@ constexpr const char* DEMO_TOMORROW = "2026-11-11";
 using cat::application::Task;
 using cat::application::TaskStore;
 
-// -------------------------
-// YARDIMCI FONKSIYONLAR
-// -------------------------
-
 lv_obj_t* box(
     lv_obj_t* parent,
-    int x,
-    int y,
-    int w,
-    int h,
-    uint32_t bg,
+    int x, int y,
+    int width, int height,
+    uint32_t color,
     int radius = 0
 )
 {
     lv_obj_t* obj = lv_obj_create(parent);
 
     lv_obj_set_pos(obj, x, y);
-    lv_obj_set_size(obj, w, h);
-
+    lv_obj_set_size(obj, width, height);
     lv_obj_set_style_bg_color(
-        obj, lv_color_hex(bg), 0
+        obj, lv_color_hex(color), 0
     );
-
     lv_obj_set_style_bg_opa(
         obj, LV_OPA_COVER, 0
     );
-
     lv_obj_set_style_border_width(obj, 0, 0);
+    lv_obj_set_style_shadow_width(obj, 0, 0);
     lv_obj_set_style_pad_all(obj, 0, 0);
     lv_obj_set_style_radius(obj, radius, 0);
-    lv_obj_set_style_shadow_width(obj, 0, 0);
 
     lv_obj_remove_flag(
         obj, LV_OBJ_FLAG_SCROLLABLE
     );
-
     lv_obj_remove_flag(
         obj, LV_OBJ_FLAG_CLICKABLE
     );
@@ -69,50 +60,83 @@ lv_obj_t* box(
 
 lv_obj_t* txt(
     lv_obj_t* parent,
-    const char* text,
-    int x,
-    int y,
+    const char* value,
+    int x, int y,
     uint32_t color,
     const lv_font_t* font = &tr_font_12
 )
 {
     lv_obj_t* obj = lv_label_create(parent);
 
-    lv_label_set_text(obj, text);
+    lv_label_set_text(obj, value);
     lv_obj_set_pos(obj, x, y);
-
     lv_obj_set_style_text_color(
         obj, lv_color_hex(color), 0
     );
-
-    lv_obj_set_style_text_font(
-        obj, font, 0
-    );
+    lv_obj_set_style_text_font(obj, font, 0);
 
     return obj;
 }
 
-// -------------------------
-// EKRAN GECISLERI
-// -------------------------
-
 void go_home(lv_event_t*)
 {
     lv_async_call(
-        [](void*) {
-            create_home_screen();
-        },
+        [](void*) { create_home_screen(); },
+        nullptr
+    );
+}
+
+void go_cat(lv_event_t*)
+{
+    lv_async_call(
+        [](void*) { create_cat_screen(); },
         nullptr
     );
 }
 
 // -------------------------
-// GOREV TAMAMLAMA
+// GOREV SISTEMI
 // -------------------------
 
-void on_task_click(lv_event_t* event)
+int group_of(const Task& task)
 {
-    const Task* task = static_cast<const Task*>(
+    if (
+        task.carried ||
+        !task.date ||
+        std::strcmp(task.date, DEMO_TODAY) <= 0
+    ) {
+        return 0;
+    }
+
+    if (
+        std::strcmp(task.date, DEMO_TOMORROW) == 0
+    ) {
+        return 1;
+    }
+
+    return 2;
+}
+
+bool after(const Task& a, const Task& b)
+{
+    if (a.completed != b.completed) {
+        return a.completed;
+    }
+
+    if (!a.time || !a.time[0]) {
+        return b.time && b.time[0];
+    }
+
+    if (!b.time || !b.time[0]) {
+        return false;
+    }
+
+    return std::strcmp(a.time, b.time) > 0;
+}
+
+void toggle_task(lv_event_t* event)
+{
+    auto* task = static_cast<const Task*>(
         lv_event_get_user_data(event)
     );
 
@@ -120,14 +144,9 @@ void on_task_click(lv_event_t* event)
         return;
     }
 
-    if (
-        TaskStore::instance()
-            .toggle_completed(task->id)
-    ) {
+    if (TaskStore::instance().toggle_completed(task->id)) {
         lv_async_call(
-            [](void*) {
-                create_tasks_screen();
-            },
+            [](void*) { create_tasks_screen(); },
             nullptr
         );
     }
@@ -143,55 +162,43 @@ void add_task(
     const Task& task
 )
 {
-    const bool completed = task.completed;
-
     lv_obj_t* row = box(
-        parent,
-        2, y,
-        216, 30,
-        WHITE, 10
+        parent, 2, y, 216, 30, WHITE, 10
     );
 
     lv_obj_add_flag(
-        row,
-        LV_OBJ_FLAG_CLICKABLE
+        row, LV_OBJ_FLAG_CLICKABLE
     );
 
     lv_obj_add_event_cb(
         row,
-        on_task_click,
+        toggle_task,
         LV_EVENT_SHORT_CLICKED,
         const_cast<Task*>(&task)
     );
 
     lv_obj_t* circle = box(
         row,
-        8, 7,
-        16, 16,
-        completed ? PURPLE : WHITE,
+        8, 7, 16, 16,
+        task.completed ? PURPLE : WHITE,
         LV_RADIUS_CIRCLE
     );
 
     lv_obj_set_style_border_width(
         circle,
-        completed ? 0 : 2,
+        task.completed ? 0 : 2,
         0
     );
 
     lv_obj_set_style_border_color(
-        circle,
-        lv_color_hex(TRACK),
-        0
+        circle, lv_color_hex(TRACK), 0
     );
 
-    if (completed) {
+    if (task.completed) {
         lv_obj_center(
             txt(
-                circle,
-                LV_SYMBOL_OK,
-                0, 0,
-                WHITE,
-                LV_FONT_DEFAULT
+                circle, LV_SYMBOL_OK,
+                0, 0, WHITE, LV_FONT_DEFAULT
             )
         );
     }
@@ -215,26 +222,25 @@ void add_task(
         );
     }
 
-    lv_obj_t* name = txt(
+    lv_obj_t* title = txt(
         row,
         display,
         32, 8,
-        completed ? MUTED : INK
+        task.completed ? MUTED : INK
     );
 
     lv_obj_set_width(
-        name,
+        title,
         task.carried ? 110 : 173
     );
 
     lv_label_set_long_mode(
-        name,
-        LV_LABEL_LONG_MODE_DOTS
+        title, LV_LABEL_LONG_MODE_DOTS
     );
 
-    if (completed) {
+    if (task.completed) {
         lv_obj_set_style_text_decor(
-            name,
+            title,
             LV_TEXT_DECOR_STRIKETHROUGH,
             0
         );
@@ -244,63 +250,13 @@ void add_task(
         txt(
             row,
             "↻ Devreden",
-            143, 8,
-            PURPLE
+            143, 8, PURPLE
         );
     }
 }
 
 // -------------------------
-// GOREV GRUPLAMA
-// -------------------------
-
-int group_of(const Task& task)
-{
-    if (
-        task.carried ||
-        !task.date ||
-        std::strcmp(
-            task.date,
-            DEMO_TODAY
-        ) <= 0
-    ) {
-        return 0;
-    }
-
-    if (
-        std::strcmp(
-            task.date,
-            DEMO_TOMORROW
-        ) == 0
-    ) {
-        return 1;
-    }
-
-    return 2;
-}
-
-bool after(
-    const Task& a,
-    const Task& b
-)
-{
-    if (a.completed != b.completed) {
-        return a.completed;
-    }
-
-    if (!a.time || !a.time[0]) {
-        return b.time && b.time[0];
-    }
-
-    if (!b.time || !b.time[0]) {
-        return false;
-    }
-
-    return std::strcmp(a.time, b.time) > 0;
-}
-
-// -------------------------
-// UST BASLIK
+// BASLIK VE ILERLEME
 // -------------------------
 
 void create_header(lv_obj_t* screen)
@@ -308,48 +264,35 @@ void create_header(lv_obj_t* screen)
     txt(
         screen,
         "10 Kasım, Salı",
-        20, 10,
-        MUTED
+        20, 10, MUTED
     );
 
     txt(
         screen,
         "Görevlerim",
-        18, 32,
-        INK,
-        &tr_font_14
+        18, 32, INK, &tr_font_14
     );
 
     lv_obj_t* add = box(
         screen,
-        197, 29,
-        32, 32,
-        PURPLE,
-        LV_RADIUS_CIRCLE
+        197, 29, 32, 32,
+        PURPLE, LV_RADIUS_CIRCLE
     );
 
     lv_obj_center(
         txt(
-            add,
-            "+",
-            0, 0,
-            WHITE,
-            &tr_font_14
+            add, "+",
+            0, 0, WHITE, &tr_font_14
         )
     );
 }
 
-// -------------------------
-// GUNLUK ILERLEME
-// -------------------------
-
 void create_progress(lv_obj_t* screen)
 {
-    const TaskStore& store =
-        TaskStore::instance();
+    const auto& store = TaskStore::instance();
 
-    int done = 0;
     int total = 0;
+    int done = 0;
 
     for (std::size_t i = 0; i < store.count(); ++i) {
         const Task& task = store.tasks()[i];
@@ -366,24 +309,20 @@ void create_progress(lv_obj_t* screen)
     }
 
     lv_obj_t* card = box(
-        screen,
-        10, 67,
-        220, 45,
-        LILAC, 13
+        screen, 10, 67, 220, 45, LILAC, 13
     );
 
     txt(
         card,
         "Günlük ilerleme",
-        11, 7,
-        INK
+        11, 7, INK
     );
 
-    char label_text[24];
+    char progress[24];
 
     lv_snprintf(
-        label_text,
-        sizeof(label_text),
+        progress,
+        sizeof(progress),
         "%d/%d",
         done,
         total
@@ -391,70 +330,53 @@ void create_progress(lv_obj_t* screen)
 
     txt(
         card,
-        label_text,
-        176, 7,
-        PURPLE
+        progress,
+        176, 7, PURPLE
     );
 
     box(
-        card,
-        11, 29,
-        198, 8,
-        TRACK, 5
+        card, 11, 29, 198, 8, TRACK, 5
     );
 
-    const int width =
-        total > 0
-            ? (198 * done) / total
-            : 0;
+    int width =
+        total > 0 ? 198 * done / total : 0;
 
     if (width > 0) {
         box(
             card,
-            11, 29,
-            width, 8,
-            PURPLE, 5
+            11, 29, width, 8, PURPLE, 5
         );
     }
 }
 
 // -------------------------
-// KAYDIRILABILIR GOREV LISTESI
+// GOREV LISTESI
 // -------------------------
 
 void create_task_list(lv_obj_t* screen)
 {
     lv_obj_t* list = box(
         screen,
-        10, 118,
-        220, 124,
-        BG
+        10, 118, 220, 124, BG
     );
 
     lv_obj_add_flag(
-        list,
-        LV_OBJ_FLAG_SCROLLABLE
+        list, LV_OBJ_FLAG_SCROLLABLE
     );
 
     lv_obj_set_scroll_dir(
-        list,
-        LV_DIR_VER
+        list, LV_DIR_VER
     );
 
     lv_obj_set_scrollbar_mode(
-        list,
-        LV_SCROLLBAR_MODE_AUTO
+        list, LV_SCROLLBAR_MODE_AUTO
     );
 
-    const TaskStore& store =
-        TaskStore::instance();
-
+    const auto& store = TaskStore::instance();
     const Task* tasks = store.tasks();
 
     const char* headings[3] = {
-        "Bugün",
-        "Yarın",
-        "Yaklaşan"
+        "Bugün", "Yarın", "Yaklaşan"
     };
 
     int y = 2;
@@ -468,8 +390,7 @@ void create_task_list(lv_obj_t* screen)
                 group_of(tasks[i]) == group &&
                 count < 16
             ) {
-                indices[count++] =
-                    static_cast<int>(i);
+                indices[count++] = static_cast<int>(i);
             }
         }
 
@@ -494,17 +415,14 @@ void create_task_list(lv_obj_t* screen)
             list,
             headings[group],
             3, y,
-            INK,
-            &tr_font_14
+            INK, &tr_font_14
         );
 
         y += 21;
 
         for (int i = 0; i < count; ++i) {
             add_task(
-                list,
-                y,
-                tasks[indices[i]]
+                list, y, tasks[indices[i]]
             );
 
             y += 34;
@@ -514,63 +432,13 @@ void create_task_list(lv_obj_t* screen)
     }
 
     lv_obj_t* history = box(
-        list,
-        2, y,
-        216, 30,
-        LILAC, 10
+        list, 2, y, 216, 30, LILAC, 10
     );
 
     txt(
         history,
         "Geçmiş görevleri gör  >",
-        12, 8,
-        PURPLE
-    );
-}
-
-// -------------------------
-// ALT MENU KEDI IKONU
-// -------------------------
-
-void create_cat_icon(
-    lv_obj_t* parent,
-    int x,
-    int y
-)
-{
-    box(
-        parent,
-        x + 3, y,
-        3, 7,
-        MUTED
-    );
-
-    box(
-        parent,
-        x + 15, y,
-        3, 7,
-        MUTED
-    );
-
-    box(
-        parent,
-        x + 3, y + 6,
-        15, 11,
-        MUTED, 3
-    );
-
-    box(
-        parent,
-        x + 7, y + 10,
-        2, 2,
-        WHITE
-    );
-
-    box(
-        parent,
-        x + 13, y + 10,
-        2, 2,
-        WHITE
+        12, 8, PURPLE
     );
 }
 
@@ -578,80 +446,93 @@ void create_cat_icon(
 // ALT MENU
 // -------------------------
 
-void create_navigation(lv_obj_t* screen)
+void nav_button(
+    lv_obj_t* bar,
+    int x,
+    const char* symbol,
+    const char* title,
+    bool active,
+    lv_event_cb_t callback
+)
 {
-    lv_obj_t* nav = box(
-        screen,
-        0, 245,
-        240, 39,
-        WHITE
-    );
-
-    txt(
-        nav,
-        LV_SYMBOL_HOME,
-        35, 2,
-        MUTED,
-        LV_FONT_DEFAULT
-    );
-
-    txt(
-        nav,
-        "Ana sayfa",
-        15, 20,
-        MUTED
-    );
-
-    txt(
-        nav,
-        LV_SYMBOL_LIST,
-        115, 2,
-        PURPLE,
-        LV_FONT_DEFAULT
-    );
-
-    txt(
-        nav,
-        "Görevler",
-        95, 20,
-        PURPLE
-    );
-
-    create_cat_icon(
-        nav,
-        188, 2
-    );
-
-    txt(
-        nav,
-        "Kedim",
-        177, 20,
-        MUTED
-    );
-
-    lv_obj_t* home_btn = box(
-        nav,
-        0, 0,
-        80, 39,
-        WHITE
-    );
-
-    lv_obj_set_style_bg_opa(
-        home_btn,
-        LV_OPA_TRANSP,
-        0
+    lv_obj_t* button = box(
+        bar, x, 0, 80, 39, WHITE
     );
 
     lv_obj_add_flag(
-        home_btn,
-        LV_OBJ_FLAG_CLICKABLE
+        button, LV_OBJ_FLAG_CLICKABLE
     );
 
-    lv_obj_add_event_cb(
-        home_btn,
-        go_home,
-        LV_EVENT_CLICKED,
+    uint32_t color =
+        active ? PURPLE : MUTED;
+
+    lv_obj_t* icon = txt(
+        button,
+        symbol,
+        0, 2,
+        color,
+        LV_FONT_DEFAULT
+    );
+
+    lv_obj_align(
+        icon,
+        LV_ALIGN_TOP_MID,
+        0, 2
+    );
+
+    lv_obj_t* caption = txt(
+        button,
+        title,
+        0, 20,
+        color
+    );
+
+    lv_obj_set_width(caption, 80);
+
+    lv_obj_set_style_text_align(
+        caption,
+        LV_TEXT_ALIGN_CENTER,
+        0
+    );
+
+    if (callback) {
+        lv_obj_add_event_cb(
+            button,
+            callback,
+            LV_EVENT_CLICKED,
+            nullptr
+        );
+    }
+}
+
+void create_navigation(lv_obj_t* screen)
+{
+    lv_obj_t* bar = box(
+        screen, 0, 245, 240, 39, WHITE
+    );
+
+    nav_button(
+        bar, 0,
+        LV_SYMBOL_HOME,
+        "Ana sayfa",
+        false,
+        go_home
+    );
+
+    nav_button(
+        bar, 80,
+        LV_SYMBOL_LIST,
+        "Görevler",
+        true,
         nullptr
+    );
+
+    nav_button(
+        bar, 160,
+        LV_SYMBOL_IMAGE,
+        "Kedim",
+        false,
+        go_cat
     );
 }
 
@@ -668,20 +549,15 @@ void create_tasks_screen()
     lv_obj_clean(screen);
 
     lv_obj_set_style_bg_color(
-        screen,
-        lv_color_hex(BG),
-        0
+        screen, lv_color_hex(BG), 0
     );
 
     lv_obj_set_style_bg_opa(
-        screen,
-        LV_OPA_COVER,
-        0
+        screen, LV_OPA_COVER, 0
     );
 
     lv_obj_remove_flag(
-        screen,
-        LV_OBJ_FLAG_SCROLLABLE
+        screen, LV_OBJ_FLAG_SCROLLABLE
     );
 
     create_header(screen);
